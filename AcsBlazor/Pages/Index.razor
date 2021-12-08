@@ -1,9 +1,12 @@
 ﻿@page "/"
 
 @inject CommunicationConfiguration CommunicationConfiguration
+@inject NavigationManager NavigationManager
+@implements IAsyncDisposable
 
 <PageTitle>Chat</PageTitle>
-My name: <input @bind="State.Name"  />
+My name:
+<input @bind="State.Name" />
 <br />
 Other participants: @((MarkupString)Participants)
 <br />
@@ -29,13 +32,20 @@ Thread topic: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?
 
     public State State { get; set; } = new State();
 
-    private Timer timer;
+    private HubConnection? hubConnection;
+        
+    public bool IsConnected =>
+        hubConnection?.State == HubConnectionState.Connected;
 
     private async Task SendMessage()
     {
         SendChatMessageResult sendChatMessageResult = await State.ChatThreadClient.SendMessageAsync(content: messageToSend, type: ChatMessageType.Text, State.Name);
         messageToSend = string.Empty;
-        await RefreshMessages();
+
+        if (hubConnection is not null)
+        {
+            await hubConnection.SendAsync("SendMessage");
+        }
     }
 
     //private async Task RefreshChatThreads()
@@ -74,7 +84,7 @@ Thread topic: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?
             }
         }
         particpants = particpants.TrimEnd(new[] { ' ', ',' });
-        if(string.IsNullOrEmpty(particpants))
+        if (string.IsNullOrEmpty(particpants))
         {
             particpants = "none";
         }
@@ -83,6 +93,18 @@ Thread topic: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?
 
     protected override async Task OnInitializedAsync()
     {
+        hubConnection = new HubConnectionBuilder()
+            .WithUrl(NavigationManager.ToAbsoluteUri("/chathub"))
+            .Build();
+
+        hubConnection.On("ReceiveMessage", async () =>
+        {
+            await RefreshMessages();
+            StateHasChanged();
+        });
+
+        await hubConnection.StartAsync();
+
         var userAndToken = await GetCommunicationIdentityToken(CommunicationConfiguration.Endpoint, CommunicationConfiguration.AccessKey);
         CommunicationTokenCredential communicationTokenCredential = new CommunicationTokenCredential(userAndToken.AccessToken.Token);
 
@@ -113,21 +135,21 @@ Thread topic: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?
             await SharedState.ManagingChatThreadClient.AddParticipantAsync(chatParticipant);
         }
 
-        await RefreshParticipants();
+        await RefreshParticipants(); //TODO SignalR
+        
+        await RefreshMessages();
 
         State.Initialized = true;
-        timer = new Timer(new TimerCallback(OnTimerInterval), null, 1000, 1000);
     }
 
-
-    private async void OnTimerInterval(object? sender)
+    public async ValueTask DisposeAsync()
     {
-        await RefreshMessages();
-        await RefreshParticipants();
-        //await RefreshChatThreads();
-
-        await InvokeAsync(() => StateHasChanged());
+        if (hubConnection is not null)
+        {
+            await hubConnection.DisposeAsync();
+        }
     }
+
 
     private static async Task<CommunicationUserIdentifierAndToken> GetCommunicationIdentityToken(Uri endpoint, string accessKey)
     {
