@@ -4,6 +4,9 @@
 
 A demonstration of Azure Communication Services capabilities in a Blazor app.
 
+![Sample dialogue from Red Dwarf](https://user-images.githubusercontent.com/9810625/145226246-dc5c2839-4e10-4dd4-b253-c1b39b0d7ceb.png)
+
+
 ## Prerequisites
 
 - An Azure account with an active subscription. [Create an account for free](https://azure.microsoft.com/free/?WT.mc_id=A261C142F).
