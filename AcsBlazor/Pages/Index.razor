@@ -1,0 +1,144 @@
+﻿@page "/"
+@using AcsBlazor.Data
+@inject CommunicationConfiguration CommunicationConfiguration
+
+<PageTitle>Chat</PageTitle>
+My name: @name
+<br />
+ThreadID: @ThreadId
+<br />
+Participants: @Participants
+<br />
+
+<p role="status">@((MarkupString)messages)</p>
+<br />
+
+<textarea @bind="message" style="width: 50%;" />
+<br />
+<button class="btn btn-primary" @onclick="SendMessage" disabled="@(IsSendingDisabled)">Send message</button>
+
+
+
+@code {
+
+    public string Participants { get; set; }
+
+    public string messages = string.Empty;
+
+    private string? message;
+
+    public bool IsSendingDisabled { get; set; } = true;
+
+    private static string ThreadId { get; set; }
+
+    private ChatClient ChatClient { get; set; }
+
+    private ChatThreadClient ChatThreadClient { get; set; }
+
+    private static ChatThreadClient ManagingChatThreadClient { get; set; }
+
+    private string name = string.Empty;
+
+    private Timer timer;
+
+    private async Task SendMessage()
+    {
+
+
+        // <List all chat threads>
+        //AsyncPageable<ChatThreadItem> chatThreadItems = ChatClient.GetChatThreadsAsync();
+        //await foreach (ChatThreadItem chatThreadItem in chatThreadItems)
+        //{
+        //    Console.WriteLine($"{ chatThreadItem.Id}");
+        //}
+
+        // <Send a message to a chat thread>
+        SendChatMessageResult sendChatMessageResult = await ChatThreadClient.SendMessageAsync(content: message, type: ChatMessageType.Text, name);
+        await RefreshMessages();
+    }
+
+
+    private async Task RefreshMessages()
+    {
+        AsyncPageable<ChatMessage> allMessages = ChatThreadClient.GetMessagesAsync();
+        string newMessages = string.Empty;
+        await foreach (ChatMessage message in allMessages)
+        {
+            if (message.Type == ChatMessageType.Text)
+            {                
+                newMessages += $"<strong>{message.SenderDisplayName}</strong>:{message.Content.Message}<br />";
+            }
+        }
+        messages = newMessages;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        var userAndToken = await GetCommunicationIdentityToken(CommunicationConfiguration.Endpoint, CommunicationConfiguration.AccessKey);
+        CommunicationTokenCredential communicationTokenCredential = new CommunicationTokenCredential(userAndToken.AccessToken.Token);
+        ChatClient = new ChatClient(CommunicationConfiguration.Endpoint, communicationTokenCredential);
+        name = $"Random user #{new Random(DateTime.Now.Millisecond).Next(0, 1000)}";
+
+        // <Start a chat thread>
+        var chatParticipant = new ChatParticipant(identifier: userAndToken.User)
+            {
+                DisplayName = name
+            };
+
+        if (ThreadId == null)
+        {
+            CreateChatThreadResult createChatThreadResult = await ChatClient.CreateChatThreadAsync(topic: "Hello world!", participants: new[] { chatParticipant });
+            ThreadId = createChatThreadResult.ChatThread.Id;
+        }
+
+        // <Get a chat thread client>
+        ChatThreadClient = ChatClient.GetChatThreadClient(threadId: ThreadId);
+
+        if (ManagingChatThreadClient == null)
+        {
+            ManagingChatThreadClient = ChatThreadClient;
+        }
+
+        // <Get thread participants>
+        AsyncPageable<ChatParticipant> allParticipants = ManagingChatThreadClient.GetParticipantsAsync();
+        bool containsCurrent = false;
+        await foreach (ChatParticipant participant in allParticipants)
+        {
+            Participants += $"{participant.DisplayName} ({((CommunicationUserIdentifier)participant.User).Id}), ";
+            if (participant.User == userAndToken.User)
+            {
+                containsCurrent = true;
+            }
+        }
+
+        if (!containsCurrent)
+        {
+            await ManagingChatThreadClient.AddParticipantAsync(chatParticipant);
+        }
+        IsSendingDisabled = false;
+            timer = new Timer(new TimerCallback(OnTimerInterval), null, 1000, 1000);
+    }
+
+    //protected override void OnAfterRender(bool firstRender)
+    //{
+    //    if (firstRender)
+    //    {
+    //    }
+    //    base.OnAfterRender(firstRender);
+    //}
+
+    private async void OnTimerInterval(object? sender)
+    {
+        await RefreshMessages();
+        
+        InvokeAsync(() => StateHasChanged());
+    }
+
+    private static async Task<CommunicationUserIdentifierAndToken> GetCommunicationIdentityToken(Uri endpoint, string accessKey)
+    {
+        CommunicationIdentityClient communicationIdentityClient = new(endpoint, new AzureKeyCredential(accessKey), new CommunicationIdentityClientOptions());
+        IEnumerable<CommunicationTokenScope> scopes = new[] { CommunicationTokenScope.Chat, CommunicationTokenScope.VoIP };
+        var response = await communicationIdentityClient.CreateUserAndTokenAsync(scopes);
+        return response.Value;
+    }
+}
