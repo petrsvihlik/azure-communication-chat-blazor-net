@@ -8,5 +8,10 @@ namespace AcsBlazor
         {
             await Clients.All.SendAsync("ReceiveMessage");
         }
+
+        public async Task ParticipantJoined()
+        {
+            await Clients.All.SendAsync("ParticipantJoined");
+        }
     }
 }

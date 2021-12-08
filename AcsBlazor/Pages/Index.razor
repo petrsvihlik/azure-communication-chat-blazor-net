@@ -44,6 +44,7 @@ Thread topic: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?
 
         if (hubConnection is not null)
         {
+            // Notify others about a new message
             await hubConnection.SendAsync("SendMessage");
         }
     }
@@ -102,6 +103,12 @@ Thread topic: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?
             await RefreshMessages();
             StateHasChanged();
         });
+        
+        hubConnection.On("ParticipantJoined", async () =>
+        {
+            await RefreshParticipants();
+            StateHasChanged();
+        });
 
         await hubConnection.StartAsync();
 
@@ -134,8 +141,12 @@ Thread topic: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?
         {
             await SharedState.ManagingChatThreadClient.AddParticipantAsync(chatParticipant);
         }
-
-        await RefreshParticipants(); //TODO SignalR
+        
+        if (hubConnection is not null)
+        {
+            // Notify others about a new participant
+            await hubConnection.SendAsync("ParticipantJoined");
+        }
         
         await RefreshMessages();
 
