@@ -1,4 +1,4 @@
-﻿namespace AcsBlazor.Data
+﻿namespace AcsBlazor.Models
 {
     public class CommunicationConfiguration
     {

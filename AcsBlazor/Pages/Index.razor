@@ -1,21 +1,21 @@
 ﻿@page "/"
-@using AcsBlazor.Data
+
 @inject CommunicationConfiguration CommunicationConfiguration
 
 <PageTitle>Chat</PageTitle>
-My name: @name
+My name: @State.Name
 <br />
-ThreadID: @ThreadId
+Other participants: @((MarkupString)Participants)
 <br />
-Participants: @Participants
+<hr />
+ThreadID: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?.Topic</span>
+
+<p role="status" style="overflow-y: scroll;max-height:300px;min-height:300px;background-color: lightgray;">@((MarkupString)Messages)</p>
 <br />
 
-<p role="status">@((MarkupString)messages)</p>
+<textarea @bind="messageToSend" style="width: 50%;" />
 <br />
-
-<textarea @bind="message" style="width: 50%;" />
-<br />
-<button class="btn btn-primary" @onclick="SendMessage" disabled="@(IsSendingDisabled)">Send message</button>
+<button class="btn btn-primary" @onclick="SendMessage" disabled="@(!State.Initialized)">Send message</button>
 
 
 
@@ -23,115 +23,111 @@ Participants: @Participants
 
     public string Participants { get; set; }
 
-    public string messages = string.Empty;
+    public string Messages { get; set; }
 
-    private string? message;
+    private string? messageToSend;
 
-    public bool IsSendingDisabled { get; set; } = true;
-
-    private static string ThreadId { get; set; }
-
-    private ChatClient ChatClient { get; set; }
-
-    private ChatThreadClient ChatThreadClient { get; set; }
-
-    private static ChatThreadClient ManagingChatThreadClient { get; set; }
-
-    private string name = string.Empty;
+    public State State { get; set; } = new State();
 
     private Timer timer;
 
     private async Task SendMessage()
     {
-
-
-        // <List all chat threads>
-        //AsyncPageable<ChatThreadItem> chatThreadItems = ChatClient.GetChatThreadsAsync();
-        //await foreach (ChatThreadItem chatThreadItem in chatThreadItems)
-        //{
-        //    Console.WriteLine($"{ chatThreadItem.Id}");
-        //}
-
-        // <Send a message to a chat thread>
-        SendChatMessageResult sendChatMessageResult = await ChatThreadClient.SendMessageAsync(content: message, type: ChatMessageType.Text, name);
+        SendChatMessageResult sendChatMessageResult = await State.ChatThreadClient.SendMessageAsync(content: messageToSend, type: ChatMessageType.Text, State.Name);
+        messageToSend = string.Empty;
         await RefreshMessages();
+    }
+
+    private async Task RefreshChatThreads()
+    {
+        AsyncPageable<ChatThreadItem> chatThreadItems = State.ChatClient.GetChatThreadsAsync();
+        await foreach (ChatThreadItem chatThreadItem in chatThreadItems)
+        {
+            Console.WriteLine($"{ chatThreadItem.Id}");
+        }
     }
 
 
     private async Task RefreshMessages()
     {
-        AsyncPageable<ChatMessage> allMessages = ChatThreadClient.GetMessagesAsync();
-        string newMessages = string.Empty;
+        AsyncPageable<ChatMessage> allMessages = State.ChatThreadClient.GetMessagesAsync();
+        string messages = string.Empty;
         await foreach (ChatMessage message in allMessages)
         {
             if (message.Type == ChatMessageType.Text)
-            {                
-                newMessages += $"<strong>{message.SenderDisplayName}</strong>:{message.Content.Message}<br />";
+            {
+                messages += $"<strong>{message.SenderDisplayName}</strong> {message.CreatedOn.Humanize() }:{message.Content.Message}<br />";
             }
         }
-        messages = newMessages;
+        Messages = messages;
+    }
+
+    private async Task RefreshParticipants()
+    {
+        AsyncPageable<ChatParticipant> allParticipants = SharedState.ManagingChatThreadClient.GetParticipantsAsync();
+        string particpants = string.Empty;
+        await foreach (ChatParticipant participant in allParticipants)
+        {
+            var user = ((Azure.Communication.CommunicationUserIdentifier)participant.User);
+            if (user.Id != State.User.Id)
+            {
+                particpants += $"<span title='{((CommunicationUserIdentifier)participant.User).Id}'>{participant.DisplayName}</span>, ";
+            }
+        }
+        particpants = particpants.TrimEnd(new[] { ' ', ',' });
+        if(string.IsNullOrEmpty(particpants))
+        {
+            particpants = "none";
+        }
+        Participants = particpants;
     }
 
     protected override async Task OnInitializedAsync()
     {
         var userAndToken = await GetCommunicationIdentityToken(CommunicationConfiguration.Endpoint, CommunicationConfiguration.AccessKey);
         CommunicationTokenCredential communicationTokenCredential = new CommunicationTokenCredential(userAndToken.AccessToken.Token);
-        ChatClient = new ChatClient(CommunicationConfiguration.Endpoint, communicationTokenCredential);
-        name = $"Random user #{new Random(DateTime.Now.Millisecond).Next(0, 1000)}";
+        State.User = userAndToken.User;
+        State.ChatClient = new ChatClient(CommunicationConfiguration.Endpoint, communicationTokenCredential);
+        State.Name = $"Random user #{new Random(DateTime.Now.Millisecond).Next(0, 1000)}";
 
         // <Start a chat thread>
-        var chatParticipant = new ChatParticipant(identifier: userAndToken.User)
+        var chatParticipant = new ChatParticipant(identifier: State.User)
             {
-                DisplayName = name
+                DisplayName = State.Name
             };
 
-        if (ThreadId == null)
+        if (SharedState.ChatThread == null)
         {
-            CreateChatThreadResult createChatThreadResult = await ChatClient.CreateChatThreadAsync(topic: "Hello world!", participants: new[] { chatParticipant });
-            ThreadId = createChatThreadResult.ChatThread.Id;
+            CreateChatThreadResult createChatThreadResult = await State.ChatClient.CreateChatThreadAsync(topic: "General discussion", participants: new[] { chatParticipant });
+            SharedState.ChatThread = createChatThreadResult.ChatThread;
         }
 
         // <Get a chat thread client>
-        ChatThreadClient = ChatClient.GetChatThreadClient(threadId: ThreadId);
+        State.ChatThreadClient = State.ChatClient.GetChatThreadClient(threadId: SharedState.ChatThread.Id);
 
-        if (ManagingChatThreadClient == null)
+        if (SharedState.ManagingChatThreadClient == null)
         {
-            ManagingChatThreadClient = ChatThreadClient;
+            // New session
+            SharedState.ManagingChatThreadClient = State.ChatThreadClient;
+        }
+        else
+        {
+            await SharedState.ManagingChatThreadClient.AddParticipantAsync(chatParticipant);
         }
 
-        // <Get thread participants>
-        AsyncPageable<ChatParticipant> allParticipants = ManagingChatThreadClient.GetParticipantsAsync();
-        bool containsCurrent = false;
-        await foreach (ChatParticipant participant in allParticipants)
-        {
-            Participants += $"{participant.DisplayName} ({((CommunicationUserIdentifier)participant.User).Id}), ";
-            if (participant.User == userAndToken.User)
-            {
-                containsCurrent = true;
-            }
-        }
+        await RefreshParticipants();
 
-        if (!containsCurrent)
-        {
-            await ManagingChatThreadClient.AddParticipantAsync(chatParticipant);
-        }
-        IsSendingDisabled = false;
-            timer = new Timer(new TimerCallback(OnTimerInterval), null, 1000, 1000);
+        State.Initialized = true;
+        timer = new Timer(new TimerCallback(OnTimerInterval), null, 1000, 1000);
     }
 
-    //protected override void OnAfterRender(bool firstRender)
-    //{
-    //    if (firstRender)
-    //    {
-    //    }
-    //    base.OnAfterRender(firstRender);
-    //}
 
     private async void OnTimerInterval(object? sender)
     {
         await RefreshMessages();
-        
-        InvokeAsync(() => StateHasChanged());
+        await RefreshParticipants();
+
+        await InvokeAsync(() => StateHasChanged());
     }
 
     private static async Task<CommunicationUserIdentifierAndToken> GetCommunicationIdentityToken(Uri endpoint, string accessKey)
