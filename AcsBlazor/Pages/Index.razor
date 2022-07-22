@@ -20,7 +20,8 @@ Thread topic: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?
 <textarea @bind="messageToSend" style="width: 50%;" />
 <br />
 <button class="btn btn-primary" @onclick="SendMessage" disabled="@(!State.Initialized)">Send message</button>
-<button class="btn btn-secondary" @onclick="RevokeToken" disabled="@(!State.Initialized)">Revoke token</button>
+<button class="btn btn-secondary" @onclick="RevokeMyToken" disabled="@(!State.Initialized)">Revoke my token</button>
+<button class="btn btn-secondary" @onclick="DeleteMyMessages" disabled="@(!State.Initialized)">Delete my messages</button>
 
 
 
@@ -52,7 +53,29 @@ Thread topic: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?
             await hubConnection.SendAsync("SendMessage");
         }
     }
-    private async Task RevokeToken()
+    private async Task DeleteMyMessages()
+    {
+        AsyncPageable<ChatMessage> allMessages = State.ChatThreadClient.GetMessagesAsync();
+
+        await foreach (ChatMessage message in allMessages)
+        {
+            if (message.Sender != null)
+            {
+                if (((CommunicationUserIdentifier)message.Sender).Id == ((CommunicationUserIdentifier)State.User).Id)
+                {
+                    await State.ChatThreadClient.DeleteMessageAsync(message.Id);
+                }
+            }
+        }
+
+        if (hubConnection is not null)
+        {
+            // Notify others about a new message
+            await hubConnection.SendAsync("SendMessage");
+        }
+    }
+
+    private async Task RevokeMyToken()
     {
         await communicationIdentityClient.RevokeTokensAsync(State.User);
     }
@@ -74,7 +97,7 @@ Thread topic: <span title="@SharedState.ChatThread?.Id">@SharedState.ChatThread?
         {
             if (message.Type == ChatMessageType.Text)
             {
-                messages += $"<strong>{message.SenderDisplayName}</strong> {message.CreatedOn.Humanize() }:{message.Content.Message}<br />";
+                messages += $"<strong>{message.SenderDisplayName}</strong> {message.CreatedOn.Humanize()}:{message.Content.Message}<br />";
             }
         }
         Messages = messages;
